@@ -49,11 +49,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          mkdir -p app
+
           if [ -f ".env.example" ]; then
             cp ".env.example" "app/.env.example"
             echo "Created app/.env.example"
           else
-            echo "ERROR: Root .env.example is missing."
+            echo "ERROR: .env.example is missing from repository root."
             exit 1
           fi
 
@@ -61,8 +63,8 @@ jobs:
             cp ".env" "app/.env"
             echo "Created app/.env"
           else
-            echo "No root .env found. Creating empty app/.env"
             touch "app/.env"
+            echo "Created empty app/.env"
           fi
 
       - name: Prepare debug keystore
@@ -83,54 +85,16 @@ jobs:
 
           test -f "$GITHUB_WORKSPACE/debug.keystore"
 
-      - name: Handle Google Services config
+      - name: Remove incomplete Google Services config
         shell: bash
         run: |
           set -euo pipefail
 
           if [ -f "app/google-services.json" ]; then
-
-            python3 - <<'PY'
-import json
-import sys
-
-path = "app/google-services.json"
-expected = "com.aistudio.taherservicestudio.zqvmkl"
-
-try:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-except Exception:
-    print("Invalid google-services.json. Removing it.")
-    sys.exit(10)
-
-for client in data.get("client", []):
-    package_name = (
-        client
-        .get("client_info", {})
-        .get("android_client_info", {})
-        .get("package_name")
-    )
-
-    if package_name == expected:
-        print("Matching google-services.json found.")
-        sys.exit(0)
-
-print("No matching client found. Removing google-services.json.")
-sys.exit(10)
-PY
-
-            RESULT=$?
-
-            if [ "$RESULT" -eq 10 ]; then
-              rm -f app/google-services.json
-            elif [ "$RESULT" -ne 0 ]; then
-              exit "$RESULT"
-            fi
-
+            echo "Removing repository Google Services config for CI debug build."
+            rm -f "app/google-services.json"
           else
-            echo "No google-services.json found."
-            echo "Project is configured to WARN for missing Google Services."
+            echo "No google-services.json present."
           fi
 
       - name: Build Debug APK
