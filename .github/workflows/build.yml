@@ -44,6 +44,27 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
+      - name: Prepare environment files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f ".env.example" ]; then
+            cp ".env.example" "app/.env.example"
+            echo "Created app/.env.example"
+          else
+            echo "ERROR: Root .env.example is missing."
+            exit 1
+          fi
+
+          if [ -f ".env" ]; then
+            cp ".env" "app/.env"
+            echo "Created app/.env"
+          else
+            echo "No root .env found. Creating empty app/.env"
+            touch "app/.env"
+          fi
+
       - name: Prepare debug keystore
         shell: bash
         run: |
@@ -68,40 +89,36 @@ jobs:
           set -euo pipefail
 
           if [ -f "app/google-services.json" ]; then
+
             python3 - <<'PY'
-          import json
-          import sys
+import json
+import sys
 
-          path = "app/google-services.json"
-          expected = "com.aistudio.taherservicestudio.zqvmkl"
+path = "app/google-services.json"
+expected = "com.aistudio.taherservicestudio.zqvmkl"
 
-          try:
-              with open(path, "r", encoding="utf-8") as f:
-                  data = json.load(f)
-          except Exception:
-              print("Invalid google-services.json. Removing it.")
-              sys.exit(10)
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    print("Invalid google-services.json. Removing it.")
+    sys.exit(10)
 
-          found = False
+for client in data.get("client", []):
+    package_name = (
+        client
+        .get("client_info", {})
+        .get("android_client_info", {})
+        .get("package_name")
+    )
 
-          for client in data.get("client", []):
-              package_name = (
-                  client
-                  .get("client_info", {})
-                  .get("android_client_info", {})
-                  .get("package_name")
-              )
+    if package_name == expected:
+        print("Matching google-services.json found.")
+        sys.exit(0)
 
-              if package_name == expected:
-                  found = True
-                  break
-
-          if not found:
-              print("No matching Firebase client found. Removing google-services.json.")
-              sys.exit(10)
-
-          print("Matching google-services.json found.")
-          PY
+print("No matching client found. Removing google-services.json.")
+sys.exit(10)
+PY
 
             RESULT=$?
 
@@ -110,8 +127,10 @@ jobs:
             elif [ "$RESULT" -ne 0 ]; then
               exit "$RESULT"
             fi
+
           else
-            echo "google-services.json not present. Continuing."
+            echo "No google-services.json found."
+            echo "Project is configured to WARN for missing Google Services."
           fi
 
       - name: Build Debug APK
