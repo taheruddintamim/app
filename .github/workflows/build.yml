@@ -34,6 +34,29 @@ jobs:
           gradle-version: 9.3.1
           cache-read-only: false
 
+      # The Secrets Gradle Plugin (applied in app/build.gradle.kts) reads
+      # defaultPropertiesFileName = ".env.example" from the project root during
+      # Gradle's configuration phase, before any task runs. Your last CI run
+      # failed here with FileNotFoundException because .env.example was not
+      # present in the checked-out repository, even though it exists in your
+      # local/AI-Studio project (most likely excluded by a .gitignore rule on
+      # the actual GitHub repo, or simply never pushed). Rather than depend on
+      # that being fixed upstream, generate it here from the same fully
+      # commented-out template so the build never depends on it being tracked.
+      - name: Ensure .env.example exists
+        run: |
+          if [ ! -f .env.example ]; then
+          cat > .env.example <<'EOF'
+          # GEMINI_API_KEY: Required for Gemini AI API calls.
+          # This is a placeholder key.
+          # AI Studio automatically injects this at runtime from user secrets.
+          # Users configure this via the Secrets panel in the AI Studio UI.
+          # IMPORTANT: Uncomment the line below if your app uses the Gemini API.
+          # If left commented out, the key will NOT be packaged in the APK.
+          # GEMINI_API_KEY=MY_GEMINI_API_KEY
+          EOF
+          fi
+
       # app/build.gradle.kts's "debugConfig" signing config points at
       # ${rootDir}/debug.keystore with alias/passwords hard-coded to the
       # standard AOSP debug values. That file is git-ignored and never
