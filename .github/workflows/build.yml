@@ -1,0 +1,71 @@
+name: Build Debug APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-debug:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # AGP 9.1.1 requires Gradle 9.3.1 minimum (it is also AGP's own default
+      # version), and this project's gradle-wrapper.properties already targets
+      # gradle-9.3.1-bin.zip. This action installs that exact Gradle version
+      # and puts it on PATH, so we invoke `gradle` directly below instead of
+      # `./gradlew` — the repo currently ships gradle-wrapper.properties but
+      # not the gradlew/gradlew.bat scripts or gradle-wrapper.jar, so relying
+      # on a wrapper here would just reintroduce the "missing gradlew" failure.
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.3.1
+          cache-read-only: false
+
+      # app/build.gradle.kts's "debugConfig" signing config points at
+      # ${rootDir}/debug.keystore with alias/passwords hard-coded to the
+      # standard AOSP debug values. That file is git-ignored and never
+      # committed, so CI has to generate it fresh every run before the
+      # debug build type can be signed.
+      - name: Generate debug keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -keypass android \
+            -alias androiddebugkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      # No google-services.json is committed (and none should be fabricated).
+      # app/build.gradle.kts already sets
+      #   googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+      # and gradle.properties already sets googleServices.missing.passthrough=true,
+      # so :app:processDebugGoogleServices will warn and continue instead of
+      # failing the build when the file is absent.
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace --no-daemon
+
+      - name: Verify APK was produced
+        run: ls -la app/build/outputs/apk/debug/
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
