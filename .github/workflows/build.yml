@@ -15,20 +15,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      - name: Checkout source
+        uses: actions/checkout@v6
 
-      - name: Set up JDK 17
+      - name: Setup JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
-      - name: Set up Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
+      - name: Install Android SDK
         shell: bash
         run: |
           set -euo pipefail
@@ -40,98 +39,87 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0"
 
-      - name: Set up Gradle 9.3.1
+      - name: Setup Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.3.1'
-
-      - name: Ensure Gradle wrapper exists
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ ! -f "./gradlew" ] || [ ! -f "./gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "Gradle wrapper is incomplete."
-            echo "Generating Gradle 9.3.1 wrapper..."
-
-            gradle wrapper \
-              --gradle-version 9.3.1 \
-              --distribution-type bin
-          fi
-
-          chmod +x ./gradlew
-
-          sed -i \
-            's#^distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip#' \
-            gradle/wrapper/gradle-wrapper.properties
-
-          ./gradlew --version
 
       - name: Prepare debug keystore
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ ! -f "./debug.keystore" ]; then
-            keytool \
-              -genkeypair \
-              -v \
-              -keystore "./debug.keystore" \
-              -storepass android \
-              -keypass android \
-              -alias androiddebugkey \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
+          keytool -genkeypair \
+            -v \
+            -keystore "$GITHUB_WORKSPACE/debug.keystore" \
+            -storepass android \
+            -keypass android \
+            -alias androiddebugkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
 
-          test -f "./debug.keystore"
+          test -f "$GITHUB_WORKSPACE/debug.keystore"
 
-      - name: Handle google-services.json
+      - name: Handle Google Services config
         shell: bash
         run: |
           set -euo pipefail
 
           if [ -f "app/google-services.json" ]; then
-            if python3 - <<'PY'
+            python3 - <<'PY'
           import json
           import sys
 
           path = "app/google-services.json"
-          package_name = "com.aistudio.taherservicestudio.zqvmkl"
+          expected = "com.aistudio.taherservicestudio.zqvmkl"
 
           try:
               with open(path, "r", encoding="utf-8") as f:
                   data = json.load(f)
           except Exception:
-              sys.exit(1)
+              print("Invalid google-services.json. Removing it.")
+              sys.exit(10)
+
+          found = False
 
           for client in data.get("client", []):
-              info = client.get("client_info", {})
-              android = info.get("android_client_info", {})
+              package_name = (
+                  client
+                  .get("client_info", {})
+                  .get("android_client_info", {})
+                  .get("package_name")
+              )
 
-              if android.get("package_name") == package_name:
-                  sys.exit(0)
+              if package_name == expected:
+                  found = True
+                  break
 
-          sys.exit(1)
+          if not found:
+              print("No matching Firebase client found. Removing google-services.json.")
+              sys.exit(10)
+
+          print("Matching google-services.json found.")
           PY
-            then
-              echo "Matching google-services.json found."
-            else
-              echo "Removing mismatched/invalid google-services.json."
+
+            RESULT=$?
+
+            if [ "$RESULT" -eq 10 ]; then
               rm -f app/google-services.json
+            elif [ "$RESULT" -ne 0 ]; then
+              exit "$RESULT"
             fi
           else
-            echo "No google-services.json found. Continuing."
+            echo "google-services.json not present. Continuing."
           fi
 
-      - name: Build debug APK
+      - name: Build Debug APK
         shell: bash
         run: |
           set -euo pipefail
 
-          ./gradlew assembleDebug \
+          gradle assembleDebug \
             --no-daemon \
             --stacktrace
 
@@ -140,14 +128,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          APK="$(find app/build/outputs/apk/debug \
+          APK=$(find app/build/outputs/apk/debug \
             -maxdepth 1 \
             -type f \
-            -name '*.apk' \
+            -name "*.apk" \
             -print \
-            -quit)"
+            -quit)
 
-          test -n "$APK"
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
 
           echo "APK generated successfully:"
           echo "$APK"
